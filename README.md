@@ -89,7 +89,7 @@ export GITHUB_TOKEN=your_github_token
 python -m scripts.poll_github_artifacts --repo RianaMalhotra/TestPilot --api http://127.0.0.1:8000
 ```
 
-The poller remembers successfully imported GitHub run IDs in `.testpilot-poll-state.json`, so repeated invocations skip previously imported runs. Failed imports remain retryable. Schedule the command externally (cron, Task Scheduler, or a persistent worker) for ongoing ingestion. It does not run continuously on its own. The state file is local, not shared across machines; concurrent pollers and importing the same run by another method can create duplicates. Only runs among the latest 20 completed runs (configurable with `--limit`) are examined per poll. The GitHub token must have Actions read access to the repository.
+The API now records GitHub repository and workflow run ID in a unique database table, making repeated imports idempotent even if the local state file is lost. The poller also remembers successfully imported run IDs in `.testpilot-poll-state.json` to avoid unnecessary downloads. Failed imports remain retryable. Schedule the command externally (cron, Task Scheduler, or a persistent worker) for ongoing ingestion. It does not run continuously on its own. The state file is local, not shared across machines; concurrent pollers may repeat network requests, but the API deduplicates imports by repository and workflow run ID. Only runs among the latest 20 completed runs (configurable with `--limit`) are examined per poll. The GitHub token must have Actions read access to the repository.
 
 ## Repeat test executions
 
@@ -107,7 +107,7 @@ python -m scripts.rerun_tests --count 3 --upload-api http://127.0.0.1:8000 --bra
 
 The command uses the current Git HEAD unless you specify `--commit-sha`. All reruns are recorded against the same commit and branch. The API must be running locally first. The command runs local test code, so only use trusted checkouts.
 
-**Versioned database migrations (Alembic):** For a new database, run `alembic upgrade head` before starting the API. The initial revision creates the current schema. For an existing database that already has both `runs.branch` and `results`, use `alembic stamp head` once after backing up the database. For a legacy database without `runs.branch`, start the earlier compatibility version of TestPilot once to add the column before stamping, or migrate the column manually. **Do not run `alembic upgrade head` against an existing unversioned database**; it will attempt to recreate existing tables. The API retains `create_all` for development convenience, but production deployments should migrate before startup.
+**Versioned database migrations (Alembic):** For a new database, run `alembic upgrade head` before starting the API. Run `alembic upgrade head` to apply the initial schema and the GitHub import-tracking revision. For an existing database that already has both `runs.branch` and `results`, use `alembic stamp head` once after backing up the database. For a legacy database without `runs.branch`, start the earlier compatibility version of TestPilot once to add the column before stamping, or migrate the column manually. **Do not run `alembic upgrade head` against an existing unversioned database**; it will attempt to recreate existing tables. The API retains `create_all` for development convenience, but production deployments should migrate before startup.
 
 ## Testing
 
@@ -123,4 +123,4 @@ A GitHub Actions workflow runs the tests on pushes and pull requests.
 - Add build and branch isolation for historical comparisons.
 - Improve failure clustering with stack-trace-aware signatures and similarity scoring.
 - Add follow-up Alembic revisions for future schema changes.
-- Deploy a scheduled poller with shared durable import tracking.
+- Deploy a scheduled poller and add authentication to ingestion endpoints.

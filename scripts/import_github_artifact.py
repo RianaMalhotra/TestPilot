@@ -55,6 +55,7 @@ def import_run(repo: str, run_id: int, api: str, token: str, artifact_name="test
         )
         run_response.raise_for_status()
         sha = run_response.json()["head_sha"]
+        branch = run_response.json().get("head_branch") or "main"
         artifacts_response = client.get(
             f"{API_ROOT}/repos/{repo}/actions/runs/{run_id}/artifacts",
             headers=headers,
@@ -74,7 +75,8 @@ def import_run(repo: str, run_id: int, api: str, token: str, artifact_name="test
         report = extract_report(archive_response.content)
         upload = client.post(
             f"{api.rstrip('/')}/runs/junit",
-            data={"commit_sha": sha},
+            data={"commit_sha": sha, "branch": branch,
+                  "github_repository": repo, "github_run_id": str(run_id)},
             files={"file": ("report.xml", report, "application/xml")},
         )
         upload.raise_for_status()

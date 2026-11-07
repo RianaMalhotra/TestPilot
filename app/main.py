@@ -5,7 +5,8 @@ import os
 from fastapi import Depends, FastAPI, HTTPException, File, Form, UploadFile
 from defusedxml import ElementTree as SafeET
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, create_engine, select
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, UniqueConstraint, create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
@@ -44,6 +45,15 @@ class Result(Base):
     duration_ms: Mapped[float] = mapped_column(Float)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     run: Mapped[Run] = relationship(back_populates="results")
+
+
+class GitHubImport(Base):
+    __tablename__ = "github_imports"
+    __table_args__ = (UniqueConstraint("repository", "workflow_run_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repository: Mapped[str] = mapped_column(String(250))
+    workflow_run_id: Mapped[int] = mapped_column()
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"))
 
 
 class TestResultIn(BaseModel):
@@ -192,9 +202,20 @@ async def import_junit(
     file: UploadFile = File(...),
     commit_sha: str = Form(..., min_length=1, max_length=100),
     branch: str = Form(default="main", min_length=1, max_length=200),
+    github_repository: str | None = Form(default=None, max_length=250),
+    github_run_id: int | None = Form(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
     """Import JUnit XML from pytest or another CI test runner."""
+    if (github_repository is None) != (github_run_id is None):
+        raise HTTPException(status_code=422, detail="Provide both GitHub repository and run ID")
+    if github_repository is not None:
+        existing = db.scalar(select(GitHubImport).where(
+            GitHubImport.repository == github_repository,
+            GitHubImport.workflow_run_id == github_run_id,
+        ))
+        if existing:
+            return {"run_id": existing.run_id, "already_imported": True, "format": "junit"}
     if not file.filename or not file.filename.lower().endswith(".xml"):
         raise HTTPException(status_code=422, detail="Upload a .xml test report")
     # Limit uploads to 5 MiB, even if Content-Length is absent.
@@ -236,9 +257,28 @@ async def import_junit(
         raise HTTPException(status_code=422, detail="No executed testcases found")
     run = Run(commit_sha=commit_sha, branch=branch, results=parsed)
     db.add(run)
-    db.commit()
+    db.flush()
+    if github_repository is not None:
+        db.add(GitHubImport(
+            repository=github_repository,
+            workflow_run_id=github_run_id,
+            run_id=run.id,
+        ))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if github_repository is None:
+            raise
+        existing = db.scalar(select(GitHubImport).where(
+            GitHubImport.repository == github_repository,
+            GitHubImport.workflow_run_id == github_run_id,
+        ))
+        if existing is None:
+            raise
+        return {"run_id": existing.run_id, "already_imported": True, "format": "junit"}
     db.refresh(run)
-    return {"run_id": run.id, "tests_recorded": len(parsed), "format": "junit"}
+    return {"run_id": run.id, "tests_recorded": len(parsed), "format": "junit", "already_imported": False}
 
 
 def _failure_signature(message: str | None) -> str:
