@@ -15,6 +15,20 @@ jobs:
         run: python -m scripts.validate_deployment
       - name: Run tests and generate JUnit report
         run: python -m pytest -q --junitxml=report.xml
+      - name: Benchmark local API
+        if: success()
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: python -m scripts.benchmark_api --output performance-report.json
+      - name: Upload performance report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testpilot-performance
+          path: performance-report.json
+          retention-days: 14
       - name: Upload JUnit report
         if: always()
         uses: actions/upload-artifact@v4

@@ -13,6 +13,10 @@ A backend test intelligence platform that analyzes CI test results, detects flak
 
 **Stack:** Python, FastAPI, SQLAlchemy, SQLite, pytest, GitHub Actions.
 
+## Automated CI performance benchmark
+
+After the test suite passes, GitHub Actions runs an in-process smoke benchmark of `GET /health` (100 requests after 10 warmups) and uploads `performance-report.json` as an artifact. Run locally using `python -m scripts.benchmark_api`. Reports include commit SHA, branch, mean and p95 latency, and sample count. This measures the test client and local app, not deployed network performance. CI does not automatically publish to the production API; ingesting reports into the historical performance endpoints remains a future integration step.
+
 ## Historical performance regression detection
 
 Record measured p95 latency per commit using `POST /performance/samples` with `commit_sha`, `branch`, `method`, `route`, `p95_ms`, and `sample_count`. Query persisted measurements with `GET /performance/trends` and detect per-route slowdowns with `GET /performance/regressions?threshold_pct=20`. Regression comparisons use the previous recorded sample for the same branch, method, and route when the commit changes; a positive baseline is required. These are **reported measurements**, not automatic benchmarks; consistent load conditions are important for meaningful comparisons.
