@@ -1,0 +1,183 @@
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+import os
+
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, create_engine, select
+from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./testpilot.db")
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    poolclass=StaticPool if DATABASE_URL == "sqlite://" else None,
+)
+SessionLocal = sessionmaker(bind=engine)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Run(Base):
+    __tablename__ = "runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    commit_sha: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    results: Mapped[list["Result"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class Result(Base):
+    __tablename__ = "results"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"))
+    test_name: Mapped[str] = mapped_column(String(500), index=True)
+    passed: Mapped[bool] = mapped_column(Boolean)
+    duration_ms: Mapped[float] = mapped_column(Float)
+    error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    run: Mapped[Run] = relationship(back_populates="results")
+
+
+class TestResultIn(BaseModel):
+    test_name: str = Field(min_length=1, max_length=500)
+    passed: bool
+    duration_ms: float = Field(ge=0)
+    error_message: str | None = Field(default=None, max_length=2000)
+
+
+class RunIn(BaseModel):
+    commit_sha: str = Field(min_length=1, max_length=100)
+    results: list[TestResultIn] = Field(min_length=1)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(engine)
+    yield
+
+
+app = FastAPI(
+    title="TestPilot",
+    description="Backend test intelligence and regression analytics",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+
+def get_db():
+    with SessionLocal() as session:
+        yield session
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.post("/runs", status_code=201)
+def create_run(payload: RunIn, db: Session = Depends(get_db)):
+    names = [r.test_name for r in payload.results]
+    if len(names) != len(set(names)):
+        raise HTTPException(status_code=422, detail="Duplicate test names in a run")
+    run = Run(commit_sha=payload.commit_sha)
+    run.results = [Result(**r.model_dump()) for r in payload.results]
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return {"run_id": run.id, "tests_recorded": len(run.results)}
+
+
+@app.get("/runs/{run_id}")
+def get_run(run_id: int, db: Session = Depends(get_db)):
+    run = db.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return {
+        "run_id": run.id,
+        "commit_sha": run.commit_sha,
+        "results": [
+            {
+                "test_name": r.test_name,
+                "passed": r.passed,
+                "duration_ms": r.duration_ms,
+                "error_message": r.error_message,
+            }
+            for r in run.results
+        ],
+    }
+
+
+@app.get("/analytics/tests")
+def test_analytics(db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(Result, Run.created_at)
+        .join(Run)
+        .order_by(Run.created_at, Run.id, Result.id)
+    ).all()
+    history = {}
+    for result, _ in rows:
+        history.setdefault(result.test_name, []).append(result)
+    output = []
+    for name, results in history.items():
+        statuses = [r.passed for r in results]
+        failures = statuses.count(False)
+        transitions = sum(a != b for a, b in zip(statuses, statuses[1:]))
+        output.append(
+            {
+                "test_name": name,
+                "executions": len(results),
+                "failures": failures,
+                "failure_rate": round(failures / len(results), 3),
+                "flaky": transitions > 0,
+                "status_transitions": transitions,
+                "average_duration_ms": round(
+                    sum(r.duration_ms for r in results) / len(results), 2
+                ),
+            }
+        )
+    return sorted(
+        output, key=lambda x: (-x["failure_rate"], -x["status_transitions"], x["test_name"])
+    )
+
+
+@app.get("/analytics/regressions")
+def regressions(db: Session = Depends(get_db)):
+    runs = db.scalars(select(Run).order_by(Run.id)).all()
+    latest = {}
+    detected = []
+    for run in runs:
+        for result in run.results:
+            prior = latest.get(result.test_name)
+            if prior is not None and prior["passed"] and not result.passed:
+                detected.append(
+                    {
+                        "test_name": result.test_name,
+                        "run_id": run.id,
+                        "commit_sha": run.commit_sha,
+                        "previous_run_id": prior["run_id"],
+                    }
+                )
+            latest[result.test_name] = {"passed": result.passed, "run_id": run.id}
+    return detected
+
+
+@app.get("/recommendations/rerun")
+def rerun_recommendations(db: Session = Depends(get_db)):
+    analytics = test_analytics(db)
+    # Heuristic: frequent failures and changing outcomes increase rerun priority.
+    ranked = [
+        {
+            **item,
+            "priority_score": round(
+                item["failure_rate"] * 70 + min(item["status_transitions"], 3) * 10, 1
+            ),
+        }
+        for item in analytics
+    ]
+    return sorted(ranked, key=lambda x: (-x["priority_score"], x["test_name"]))
