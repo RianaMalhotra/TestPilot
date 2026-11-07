@@ -1,163 +1,134 @@
 # TestPilot
 
-A backend test intelligence platform that analyzes CI test results, detects flaky tests and regressions, tracks failure patterns, and prioritizes test reruns to improve software reliability.
+**Automated CI test intelligence and performance regression detection**
 
-## Features
+TestPilot is a backend-first platform that ingests pytest/JUnit results, tracks test reliability across commits, detects regressions and flaky outcomes, and recommends which tests to rerun. It also records API latency measurements and compares p95 performance across builds.
 
-- Ingest JSON results or JUnit XML reports from pytest/CI into SQLite via a REST API.
-- Track test execution history, failure rates, average runtimes, status transitions, and per-run trends.
-- Record branch metadata and detect pass-to-fail changes within a selected branch.
-- Cluster recurring failures using normalized error-message signatures.
-- Detect pass-to-fail regressions and rank tests for rerun using a transparent heuristic.
-- Automatically test the backend on GitHub Actions.
+**Python · FastAPI · SQLAlchemy · Alembic · PostgreSQL/SQLite · pytest · GitHub Actions**
 
-**Stack:** Python, FastAPI, SQLAlchemy, SQLite, pytest, GitHub Actions.
+## Architecture
 
-## End-to-end validation
+```mermaid
+flowchart LR
+    A["GitHub Actions / pytest"] -->|"JUnit XML artifact"| B["Artifact importer / scheduled poller"]
+    B -->|"Authenticated HTTP"| C["FastAPI ingestion"]
+    D["JSON test runs"] --> C
+    C --> E[("PostgreSQL / SQLite")]
+    E --> F["Reliability analytics"]
+    E --> G["Flakiness and regression detection"]
+    E --> H["Rerun recommendations"]
+    I["CI smoke benchmark"] -->|"JSON report artifact"| J["Optional performance ingestion"]
+    J --> E
+    E --> K["Historical latency trends / regressions"]
+    C --> L["Request logs and in-process metrics"]
+```
 
-Run `python -m pytest -q tests/test_integration_e2e.py` to verify the authenticated JUnit import → persisted run → failure analytics → performance history → regression detection flow against a local test database. The deployment validator also checks that the performance migration exists and that Alembic accepts PostgreSQL URLs. These tests do **not** replace a live Render/PostgreSQL deployment smoke test.
+The benchmark artifact is **not automatically imported** into the database. Publishing latency samples requires calling `POST /performance/samples`. The scheduled JUnit importer requires a reachable backend and configured repository secrets.
 
-## Automated CI performance benchmark
+## What it does
 
-After the test suite passes, GitHub Actions runs an in-process smoke benchmark of `GET /health` (100 requests after 10 warmups) and uploads `performance-report.json` as an artifact. Run locally using `python -m scripts.benchmark_api`. Reports include commit SHA, branch, mean and p95 latency, and sample count. This measures the test client and local app, not deployed network performance. CI does not automatically publish to the production API; ingesting reports into the historical performance endpoints remains a future integration step.
+| Capability | Implementation |
+|---|---|
+| CI test ingestion | JSON and JUnit XML REST endpoints; GitHub Actions artifact importer |
+| Reliable imports | Persistent deduplication by GitHub repository and workflow-run ID |
+| Test history | Failure rates, execution duration, pass/fail transitions, branch trends |
+| Flaky-test analysis | Conflicting outcomes on the **same commit**; avoids equating every code change with flakiness |
+| Regression detection | Pass-to-fail changes, including branch-scoped comparisons |
+| Failure clustering | Normalized error-message signatures |
+| Test prioritization | Explainable heuristic for recommended reruns |
+| Performance monitoring | Request IDs, JSON logs, slow-request warnings, rolling latency statistics |
+| Historical latency | Commit-associated p95 measurements and configurable slowdown detection |
+| CI benchmarking | Local in-process health endpoint benchmark, uploaded as a JSON artifact |
+| Deployment | Alembic migrations, Render Blueprint, optional API-key protection |
 
-## Historical performance regression detection
+## Run locally
 
-Record measured p95 latency per commit using `POST /performance/samples` with `commit_sha`, `branch`, `method`, `route`, `p95_ms`, and `sample_count`. Query persisted measurements with `GET /performance/trends` and detect per-route slowdowns with `GET /performance/regressions?threshold_pct=20`. Regression comparisons use the previous recorded sample for the same branch, method, and route when the commit changes; a positive baseline is required. These are **reported measurements**, not automatic benchmarks; consistent load conditions are important for meaningful comparisons.
-
-## Observability
-
-TestPilot emits JSON request logs with a request ID, method, route template, response status, and duration. Each HTTP response includes `X-Request-ID`. The authenticated `GET /metrics` endpoint exposes process-local request counts by route and status, plus rolling latency statistics (average, maximum, and p95) based on up to 500 recent requests per route. These counters reset on restart and are not shared across multiple workers. Set `TESTPILOT_SLOW_REQUEST_MS` to configure the slow-request warning threshold (default 1000 ms); warnings are emitted as structured JSON. No request bodies or API keys are logged.
-
-Validate the deployment configuration locally with `python -m scripts.validate_deployment`. CI runs the same check. This validates required configuration fields, not actual hosting availability, secrets, or live database connectivity.
-
-## Production deployment
-
-A Render Blueprint (`render.yaml`) defines a Python web service and managed PostgreSQL database. It uses `alembic upgrade head` before deployment, starts Uvicorn, and checks `/ready`. Review hosting costs and service availability before applying the Blueprint. This repository does **not** provision a deployment automatically.
-
-For any public deployment, set `TESTPILOT_REQUIRE_AUTH=1` and a strong `TESTPILOT_API_KEY`. When the key is set, the API requires `X-API-Key` for ingestion, analytics, recommendations, and individual run retrieval. `/health` and `/ready` remain public for monitoring. Set `TESTPILOT_REQUIRE_MIGRATIONS=1` to require the latest Alembic revision in the readiness check.
-
-PostgreSQL uses the psycopg 3 driver. Validate the Render plan, database connection, and migration lifecycle before production use. Do not store secrets in source control.
-
-## Quick start
-
-Requires Python 3.12 or newer.
+Requires Python 3.12+.
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+source .venv/bin/activate    # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Visit http://127.0.0.1:8000/docs to explore the interactive API documentation.
-
-## Example: submit a run
+Visit [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for interactive API documentation.
 
 ```bash
+# Separate terminal: ingest a test run
 curl -X POST http://127.0.0.1:8000/runs \
   -H "Content-Type: application/json" \
-  -d '{"commit_sha":"abc123","results":[{"test_name":"tests/test_login.py::test_login","passed":false,"duration_ms":12.5,"error_message":"AssertionError"}]}'
+  -d '{"commit_sha":"demo123","branch":"main","results":[{"test_name":"tests/test_login.py::test_login","passed":false,"duration_ms":12.5,"error_message":"AssertionError"}]}'
+
+# Inspect analytics
+curl http://127.0.0.1:8000/analytics/summary
 ```
 
-## API
+If `TESTPILOT_API_KEY` is set, supply `-H "X-API-Key: YOUR_KEY"` on protected requests.
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /health` | Process health check |
-| `GET /ready` | Database readiness check |
-| `GET /metrics` | Authenticated, process-local HTTP request counters |
-| `POST /performance/samples` | Persist commit-specific latency measurements |
-| `GET /performance/trends` | Historical API latency measurements |
-| `GET /performance/regressions` | Detect latency increases between recorded commits |
-| `POST /runs` | Record a CI test run as JSON |
-| `POST /runs/junit` | Upload JUnit XML (multipart form) |
-| `GET /runs/{run_id}` | Retrieve run details |
-| `GET /analytics/tests` | Failure rates and status transitions |
-| `GET /analytics/regressions` | Detect pass-to-fail changes |
-| `GET /recommendations/rerun` | Rank tests for reruns |
-| `GET /analytics/failure-clusters` | Group similar failure messages |
-| `GET /analytics/trends` | View per-run pass rates |
-| `GET /analytics/summary` | View overall reliability statistics |
-| `GET /analytics/flakiness` | Classify inconsistent outcomes on identical commits |
-| `GET /analytics/branch-regressions?branch=main` | Detect regressions within one branch |
+## Demo walkthrough
 
-Failure clusters use first-line message normalization (numbers and hexadecimal addresses), not semantic similarity. The original `/analytics/tests` endpoint retains a simple transition-based *flakiness heuristic*. The dedicated `/analytics/flakiness` endpoint instead requires repeated executions on the same commit to identify inconsistent outcomes. An outcome change can also reflect a real code fix or regression; more advanced classification will distinguish these cases.
-
-## Import a real pytest report
-
-Generate a JUnit report:
+The integration test provides a deterministic demo of the complete pipeline without requiring external services:
 
 ```bash
-python -m pytest --junitxml=report.xml
+python -m pytest -q tests/test_integration_e2e.py
+python -m scripts.validate_deployment
+python -m scripts.benchmark_api
 ```
 
-With the API running, import it:
+For a guided demonstration, show these endpoints in `/docs`:
+
+1. `POST /runs/junit` — import a JUnit report with a commit SHA.
+2. `GET /analytics/tests` and `GET /analytics/regressions` — explain test history and regressions.
+3. `GET /analytics/flakiness` — compare repeated executions on the same commit.
+4. `GET /recommendations/rerun` — inspect test prioritization.
+5. `POST /performance/samples` followed by `GET /performance/regressions` — compare p95 measurements.
+6. `GET /metrics` — inspect in-process request statistics.
+
+To create a real JUnit report, run `python -m pytest --junitxml=report.xml` and upload it to `POST /runs/junit` as multipart form data with `commit_sha` and `file` fields.
+
+## CI integration
+
+The **Backend CI** workflow runs tests on pushes and pull requests, uploads `testpilot-junit`, and runs a 100-request local benchmark after tests pass, uploading `testpilot-performance`. Both artifacts are retained for 14 days.
+
+For manual ingestion, set `GITHUB_TOKEN` with Actions read permission, then run:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/runs/junit -F 'commit_sha=abc123' -F 'file=@report.xml'
-```
-
-Skipped testcases are excluded; failed/error testcases are recorded as failures. Maximum upload size is 5 MiB. This MVP imports reports manually; automatic CI artifact ingestion is a future milestone.
-
-## GitHub Actions artifact integration
-
-The CI workflow generates `report.xml` and uploads it as the `testpilot-junit` artifact, even if tests fail. To ingest a completed workflow run into a locally running TestPilot server:
-
-```bash
-export GITHUB_TOKEN=your_github_token
 python -m scripts.import_github_artifact --repo RianaMalhotra/TestPilot --run-id YOUR_RUN_ID
 ```
 
-On Windows PowerShell, set the token with `$env:GITHUB_TOKEN="..."`. The token must have permission to read Actions artifacts (for private repositories, Actions: read). Never commit tokens. The importer retrieves the run's commit SHA, downloads its JUnit artifact, validates the archive, and submits the XML to the backend. This is a **manual command**, not a background webhook or scheduled ingestion service. Artifact retention is 14 days.
+The `Import CI Reports` workflow can poll every six hours. To activate it, configure repository variable `TESTPILOT_API_URL` with your **deployed HTTPS backend** and secret `TESTPILOT_API_KEY` matching the backend. Until configured, scheduled ingestion cannot reach a server. The poller skips workflows other than `Backend CI`; persistent database deduplication prevents duplicate imports.
 
-## API authentication and scheduled ingestion
+## Deployment and security
 
-Set `TESTPILOT_API_KEY` on the TestPilot backend to require an `X-API-Key` header for `POST /runs` and `POST /runs/junit`. If the variable is unset, writes remain unauthenticated for local development; **set it in any public deployment**. Analytics endpoints and run details require the same key when configured; health and readiness checks remain public.
+`render.yaml` describes a Render Python web service and managed PostgreSQL database. It runs `alembic upgrade head` before startup and checks `GET /ready`. **No production deployment has been created or verified by this repository.** Review hosting costs before applying the Blueprint.
 
-The `Import CI Reports` GitHub Actions workflow runs every six hours (or manually). To enable it, configure repository variable `TESTPILOT_API_URL` with your deployed HTTPS backend URL and secret `TESTPILOT_API_KEY` with the same key configured on the backend. The workflow does nothing until the URL variable is configured. GitHub-hosted runners cannot reach a backend running only on localhost.
+Set `TESTPILOT_REQUIRE_AUTH=1` and a strong `TESTPILOT_API_KEY` in production. The key protects ingestion, analytics, run details, performance endpoints, and metrics. `/health` and `/ready` are public. `TESTPILOT_REQUIRE_MIGRATIONS=1` enforces the expected Alembic revision in readiness checks. `TESTPILOT_SLOW_REQUEST_MS` sets the slow-request logging threshold (default 1000 ms).
 
-## Poll GitHub Actions artifacts
+SQLite is suitable for local development; PostgreSQL is intended for persistent hosting. The API uses `create_all` for development convenience; run Alembic migrations before production startup. If upgrading an existing unversioned SQLite database, back it up and reconcile its schema before stamping or migrating.
 
-Poll the most recent completed workflow runs and ingest their JUnit artifacts into a running TestPilot API:
+## Technical notes and limitations
 
-```bash
-export GITHUB_TOKEN=your_github_token
-python -m scripts.poll_github_artifacts --repo RianaMalhotra/TestPilot --api http://127.0.0.1:8000
-```
+- Same-commit inconsistency is evidence of flakiness, not proof of the underlying cause.
+- Failure clustering uses normalized first-line error signatures, not semantic embeddings.
+- Latency regression comparisons use the preceding recorded sample for each branch/method/route when the commit changes; they do not account for statistical variance or machine differences.
+- The CI benchmark measures an **in-process test client**, not deployed network performance. CI runner contention can change measurements.
+- `GET /metrics` uses process-local counters and the latest 500 latency samples per route; statistics reset on restart and are not aggregated across workers.
+- GitHub artifact polling uses local state for efficiency and persistent database deduplication for correctness. The state file is not shared between CI runners.
+- There is no deployed UI; this is intentionally a backend/API project.
 
-The API now records GitHub repository and workflow run ID in a unique database table, making repeated imports idempotent even if the local state file is lost. The poller also remembers successfully imported run IDs in `.testpilot-poll-state.json` to avoid unnecessary downloads. Failed imports remain retryable. Schedule the command externally (cron, Task Scheduler, or a persistent worker) for ongoing ingestion. It does not run continuously on its own. The state file is local, not shared across machines; concurrent pollers may repeat network requests, but the API deduplicates imports by repository and workflow run ID. Only runs among the latest 20 completed runs (configurable with `--limit`) are examined per poll. The GitHub token must have Actions read access to the repository.
-
-## Repeat test executions
-
-Run pytest three times on the same checkout to generate separate JUnit reports:
-
-```bash
-python -m scripts.rerun_tests --count 3 --output-dir rerun-reports
-```
-
-Use `--count` from 1 to 20. Each execution creates a separate `rerun-N.xml` file. To automatically upload each generated report to a running TestPilot API:
+## Validation
 
 ```bash
-python -m scripts.rerun_tests --count 3 --upload-api http://127.0.0.1:8000 --branch main
+python -m pytest -q
+python -m scripts.validate_deployment
 ```
 
-The command uses the current Git HEAD unless you specify `--commit-sha`. All reruns are recorded against the same commit and branch. The API must be running locally first. The command runs local test code, so only use trusted checkouts.
+GitHub Actions provides the current CI result in the [Actions tab](https://github.com/RianaMalhotra/TestPilot/actions).
 
-**Versioned database migrations (Alembic):** For a new database, run `alembic upgrade head` before starting the API. Run `alembic upgrade head` to apply the initial schema and the GitHub import-tracking revision. For an existing database that already has both `runs.branch` and `results`, use `alembic stamp head` once after backing up the database. For a legacy database without `runs.branch`, start the earlier compatibility version of TestPilot once to add the column before stamping, or migrate the column manually. **Do not run `alembic upgrade head` against an existing unversioned database**; it will attempt to recreate existing tables. The API retains `create_all` for development convenience, but production deployments should migrate before startup.
+## Resume-ready description
 
-## Testing
+**TestPilot — CI Test Intelligence & Regression Analytics | Python, FastAPI, PostgreSQL, pytest, GitHub Actions**
 
-```bash
-pytest -q
-```
-
-A GitHub Actions workflow runs the tests on pushes and pull requests.
-
-## Roadmap
-
-- Import JUnit XML artifacts from GitHub Actions using the GitHub API.
-- Add build and branch isolation for historical comparisons.
-- Improve failure clustering with stack-trace-aware signatures and similarity scoring.
-- Add follow-up Alembic revisions for future schema changes.
-- Add authenticated analytics access, rate limits, and production monitoring.
+Built a backend platform to ingest and deduplicate CI/JUnit test reports, analyze historical test failures and same-commit flakiness, detect functional and API latency regressions, and prioritize reruns. Implemented authenticated REST APIs, Alembic migrations, structured observability, GitHub Actions artifact ingestion, and automated integration/benchmark tests.

@@ -37,3 +37,20 @@ def test_failed_import_remains_retryable(tmp_path):
             poll("owner/repo", "http://localhost", "token", state,
                  importer=lambda *args: (_ for _ in ()).throw(ValueError("missing artifact")))
     assert not state.exists()
+
+
+def test_poll_ignores_workflows_without_junit_reports(tmp_path):
+    state = tmp_path / "state.json"
+    client = Mock()
+    client.get.return_value.json.return_value = {
+        "workflow_runs": [
+            {"id": 12, "name": "Import CI Reports"},
+            {"id": 11, "name": "Backend CI"},
+        ]
+    }
+    client.__enter__ = Mock(return_value=client)
+    client.__exit__ = Mock(return_value=False)
+    with patch("scripts.poll_github_artifacts.httpx.Client", return_value=client):
+        imported = poll("owner/repo", "http://localhost", "token", state,
+                        importer=lambda repo, run_id, api, token: {"run_id": run_id})
+    assert [item["github_run_id"] for item in imported] == [11]

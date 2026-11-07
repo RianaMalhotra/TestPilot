@@ -38,6 +38,9 @@ def poll(repo, api, token, state_path, limit=20, importer=import_run, api_key=No
     imported = []
     # Oldest first to preserve chronology in TestPilot.
     for run in reversed(runs):
+        # Other workflows (including the importer) do not upload JUnit artifacts.
+        if run.get("name", "Backend CI") != "Backend CI":
+            continue
         run_id = run["id"]
         if run_id in processed:
             continue
