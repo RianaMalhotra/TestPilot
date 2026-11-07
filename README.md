@@ -6,40 +6,54 @@ TestPilot is a backend-first platform that ingests pytest/JUnit results, tracks 
 
 **Python · FastAPI · SQLAlchemy · Alembic · PostgreSQL/SQLite · pytest · GitHub Actions**
 
-## Architecture
+## Why I built it
 
-```mermaid
-flowchart LR
-    A["GitHub Actions / pytest"] -->|"JUnit XML artifact"| B["Artifact importer / scheduled poller"]
-    B -->|"Authenticated HTTP"| C["FastAPI ingestion"]
-    D["JSON test runs"] --> C
-    C --> E[("PostgreSQL / SQLite")]
-    E --> F["Reliability analytics"]
-    E --> G["Flakiness and regression detection"]
-    E --> H["Rerun recommendations"]
-    I["CI smoke benchmark"] -->|"JSON report artifact"| J["Optional performance ingestion"]
-    J --> E
-    E --> K["Historical latency trends / regressions"]
-    C --> L["Request logs and in-process metrics"]
-```
+CI pipelines can tell you **that a test failed**, but they don't always explain whether the failure is new, recurring, or inconsistent. When a suite grows, manually comparing reports across commits and deciding which tests to rerun becomes time-consuming.
 
-The benchmark artifact is **not automatically imported** into the database. Publishing latency samples requires calling `POST /performance/samples`. The scheduled JUnit importer requires a reachable backend and configured repository secrets.
+I built TestPilot to turn individual CI test reports into a searchable history of software reliability. The goal is to help developers answer three practical questions: **What broke? Has it happened before? What should I investigate or rerun first?**
 
 ## What it does
 
-| Capability | Implementation |
-|---|---|
-| CI test ingestion | JSON and JUnit XML REST endpoints; GitHub Actions artifact importer |
-| Reliable imports | Persistent deduplication by GitHub repository and workflow-run ID |
-| Test history | Failure rates, execution duration, pass/fail transitions, branch trends |
-| Flaky-test analysis | Conflicting outcomes on the **same commit**; avoids equating every code change with flakiness |
-| Regression detection | Pass-to-fail changes, including branch-scoped comparisons |
-| Failure clustering | Normalized error-message signatures |
-| Test prioritization | Explainable heuristic for recommended reruns |
-| Performance monitoring | Request IDs, JSON logs, slow-request warnings, rolling latency statistics |
-| Historical latency | Commit-associated p95 measurements and configurable slowdown detection |
-| CI benchmarking | Local in-process health endpoint benchmark, uploaded as a JSON artifact |
-| Deployment | Alembic migrations, Render Blueprint, optional API-key protection |
+TestPilot is a backend API for analyzing automated test results and spotting changes in software quality over time.
+
+- **Tracks test reliability:** Records pass/fail results, execution times, failure rates, and trends across commits and branches.
+- **Detects functional regressions:** Identifies tests that previously passed but now fail.
+- **Investigates flaky tests:** Looks for inconsistent outcomes when the same test is executed repeatedly on the **same commit**.
+- **Groups recurring failures:** Clusters failures using normalized error-message signatures to make repeated issues easier to recognize.
+- **Recommends reruns:** Ranks tests using an explainable heuristic so developers can focus on the most useful next checks.
+- **Monitors API performance:** Records p95 latency by commit and flags slowdowns relative to previous measurements.
+- **Supports CI workflows:** Imports JUnit XML reports from GitHub Actions and produces local API benchmark artifacts.
+
+TestPilot is intentionally **backend-first**: its outputs are available through REST endpoints and interactive FastAPI documentation rather than a custom dashboard.
+
+## How it works
+
+1. **Collect:** pytest generates a JUnit XML report in GitHub Actions. An importer can retrieve the artifact and send it to TestPilot, or a developer can submit JUnit XML or JSON directly.
+2. **Store:** FastAPI validates the incoming data, then SQLAlchemy persists runs, individual test outcomes, commit/branch metadata, and performance samples in SQLite or PostgreSQL. GitHub imports are deduplicated using repository and workflow-run identifiers.
+3. **Analyze:** API endpoints compare historical outcomes to calculate failure trends, identify pass-to-fail regressions, classify same-commit inconsistency, and group similar error messages.
+4. **Prioritize:** A transparent rerun recommendation heuristic surfaces tests worth investigating. Performance endpoints compare recorded p95 latency samples across commits.
+5. **Observe:** Structured request logs, request IDs, slow-request warnings, and process-local metrics help diagnose API behavior.
+
+### System architecture
+
+```mermaid
+flowchart LR
+    A["pytest / GitHub Actions"] -->|"JUnit report"| B["Artifact importer"]
+    D["Manual JSON / XML upload"] --> C["FastAPI REST API"]
+    B --> C
+    C --> E[("SQLite / PostgreSQL")]
+    E --> F["Test history and failure analysis"]
+    E --> G["Flakiness and regression detection"]
+    E --> H["Rerun recommendations"]
+    I["CI API smoke benchmark"] -->|"JSON artifact"| J["Optional performance sample upload"]
+    J --> C
+    E --> K["Latency trends and slowdown detection"]
+    C --> L["Structured logs and request metrics"]
+```
+
+**Tech stack:** Python, FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL/SQLite, pytest, httpx, GitHub Actions, and Render deployment configuration.
+
+**Important distinction:** GitHub Actions produces the performance benchmark report, but it is not automatically imported into the historical performance database. The scheduled JUnit importer also requires a deployed, reachable API and configured credentials.
 
 ## Run locally
 
