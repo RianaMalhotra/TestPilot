@@ -6,6 +6,7 @@ A backend test intelligence platform that analyzes CI test results, detects flak
 
 - Ingest JSON results or JUnit XML reports from pytest/CI into SQLite via a REST API.
 - Track test execution history, failure rates, average runtimes, status transitions, and per-run trends.
+- Record branch metadata and detect pass-to-fail changes within a selected branch.
 - Cluster recurring failures using normalized error-message signatures.
 - Detect pass-to-fail regressions and rank tests for rerun using a transparent heuristic.
 - Automatically test the backend on GitHub Actions.
@@ -48,6 +49,7 @@ curl -X POST http://127.0.0.1:8000/runs \
 | `GET /analytics/trends` | View per-run pass rates |
 | `GET /analytics/summary` | View overall reliability statistics |
 | `GET /analytics/flakiness` | Classify inconsistent outcomes on identical commits |
+| `GET /analytics/branch-regressions?branch=main` | Detect regressions within one branch |
 
 Failure clusters use first-line message normalization (numbers and hexadecimal addresses), not semantic similarity. The original `/analytics/tests` endpoint retains a simple transition-based *flakiness heuristic*. The dedicated `/analytics/flakiness` endpoint instead requires repeated executions on the same commit to identify inconsistent outcomes. An outcome change can also reflect a real code fix or regression; more advanced classification will distinguish these cases.
 
@@ -78,6 +80,18 @@ python -m scripts.import_github_artifact --repo RianaMalhotra/TestPilot --run-id
 
 On Windows PowerShell, set the token with `$env:GITHUB_TOKEN="..."`. The token must have permission to read Actions artifacts (for private repositories, Actions: read). Never commit tokens. The importer retrieves the run's commit SHA, downloads its JUnit artifact, validates the archive, and submits the XML to the backend. This is a **manual command**, not a background webhook or scheduled ingestion service. Artifact retention is 14 days.
 
+## Repeat test executions
+
+Run pytest three times on the same checkout to generate separate JUnit reports:
+
+```bash
+python -m scripts.rerun_tests --count 3 --output-dir rerun-reports
+```
+
+Use `--count` from 1 to 20. Each execution creates a separate `rerun-N.xml` file. Import those reports through `POST /runs/junit` using the same commit SHA and branch to build evidence of inconsistent outcomes. The command runs local test code, so only use trusted checkouts.
+
+**Note:** For existing SQLite databases created before this milestone, delete the disposable `testpilot.db` file before starting the upgraded API, or migrate the schema manually. SQLAlchemy's `create_all` does not alter existing tables.
+
 ## Testing
 
 ```bash
@@ -91,7 +105,7 @@ A GitHub Actions workflow runs the tests on pushes and pull requests.
 - Import JUnit XML artifacts from GitHub Actions using the GitHub API.
 - Add build and branch isolation for historical comparisons.
 - Improve failure clustering with stack-trace-aware signatures and similarity scoring.
-- Automate same-commit reruns and add branch-aware regression analysis.
+- Automatically ingest rerun reports and add database migrations.
 - Add automatic ingestion via scheduled polling or an authenticated webhook.
 
 ## License

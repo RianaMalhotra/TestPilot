@@ -26,6 +26,7 @@ class Run(Base):
     __tablename__ = "runs"
     id: Mapped[int] = mapped_column(primary_key=True)
     commit_sha: Mapped[str] = mapped_column(String(100))
+    branch: Mapped[str] = mapped_column(String(200), default="main")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -54,6 +55,7 @@ class TestResultIn(BaseModel):
 
 class RunIn(BaseModel):
     commit_sha: str = Field(min_length=1, max_length=100)
+    branch: str = Field(default="main", min_length=1, max_length=200)
     results: list[TestResultIn] = Field(min_length=1)
 
 
@@ -86,7 +88,7 @@ def create_run(payload: RunIn, db: Session = Depends(get_db)):
     names = [r.test_name for r in payload.results]
     if len(names) != len(set(names)):
         raise HTTPException(status_code=422, detail="Duplicate test names in a run")
-    run = Run(commit_sha=payload.commit_sha)
+    run = Run(commit_sha=payload.commit_sha, branch=payload.branch)
     run.results = [Result(**r.model_dump()) for r in payload.results]
     db.add(run)
     db.commit()
@@ -102,6 +104,7 @@ def get_run(run_id: int, db: Session = Depends(get_db)):
     return {
         "run_id": run.id,
         "commit_sha": run.commit_sha,
+        "branch": run.branch,
         "results": [
             {
                 "test_name": r.test_name,
@@ -188,6 +191,7 @@ def rerun_recommendations(db: Session = Depends(get_db)):
 async def import_junit(
     file: UploadFile = File(...),
     commit_sha: str = Form(..., min_length=1, max_length=100),
+    branch: str = Form(default="main", min_length=1, max_length=200),
     db: Session = Depends(get_db),
 ):
     """Import JUnit XML from pytest or another CI test runner."""
@@ -230,7 +234,7 @@ async def import_junit(
                              duration_ms=duration, error_message=message))
     if not parsed:
         raise HTTPException(status_code=422, detail="No executed testcases found")
-    run = Run(commit_sha=commit_sha, results=parsed)
+    run = Run(commit_sha=commit_sha, branch=branch, results=parsed)
     db.add(run)
     db.commit()
     db.refresh(run)
@@ -360,3 +364,26 @@ def flakiness_report(db: Session = Depends(get_db)):
             "inconsistent_commits": inconsistent,
         })
     return sorted(output, key=lambda item: item["test_name"])
+
+
+@app.get("/analytics/branch-regressions")
+def branch_regressions(branch: str, db: Session = Depends(get_db)):
+    """Detect pass-to-fail changes within one branch's ingestion history."""
+    runs = db.scalars(
+        select(Run).where(Run.branch == branch).order_by(Run.id)
+    ).all()
+    latest = {}
+    detected = []
+    for run in runs:
+        for result in run.results:
+            prior = latest.get(result.test_name)
+            if prior is not None and prior["passed"] and not result.passed:
+                detected.append({
+                    "branch": branch,
+                    "test_name": result.test_name,
+                    "run_id": run.id,
+                    "commit_sha": run.commit_sha,
+                    "previous_run_id": prior["run_id"],
+                })
+            latest[result.test_name] = {"passed": result.passed, "run_id": run.id}
+    return detected
