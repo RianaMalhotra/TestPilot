@@ -62,6 +62,17 @@ curl -X POST http://127.0.0.1:8000/runs/junit -F 'commit_sha=abc123' -F 'file=@r
 
 Skipped testcases are excluded; failed/error testcases are recorded as failures. Maximum upload size is 5 MiB. This MVP imports reports manually; automatic CI artifact ingestion is a future milestone.
 
+## GitHub Actions artifact integration
+
+The CI workflow generates `report.xml` and uploads it as the `testpilot-junit` artifact, even if tests fail. To ingest a completed workflow run into a locally running TestPilot server:
+
+```bash
+export GITHUB_TOKEN=your_github_token
+python -m scripts.import_github_artifact --repo RianaMalhotra/TestPilot --run-id YOUR_RUN_ID
+```
+
+On Windows PowerShell, set the token with `$env:GITHUB_TOKEN="..."`. The token must have permission to read Actions artifacts (for private repositories, Actions: read). Never commit tokens. The importer retrieves the run's commit SHA, downloads its JUnit artifact, validates the archive, and submits the XML to the backend. This is a **manual command**, not a background webhook or scheduled ingestion service. Artifact retention is 14 days.
+
 ## Testing
 
 ```bash
@@ -72,11 +83,11 @@ A GitHub Actions workflow runs the tests on pushes and pull requests.
 
 ## Roadmap
 
-- Automatically fetch JUnit XML artifacts from CI pipelines.
+- Import JUnit XML artifacts from GitHub Actions using the GitHub API.
 - Add build and branch isolation for historical comparisons.
 - Classify failure signatures and recurring errors.
 - Improve flakiness detection with same-commit reruns.
-- Provide GitHub Actions artifact ingestion.
+- Add automatic ingestion via scheduled polling or an authenticated webhook.
 
 ## License
 
