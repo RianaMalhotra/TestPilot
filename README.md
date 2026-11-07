@@ -51,6 +51,31 @@ flowchart LR
     C --> L["Structured logs and request metrics"]
 ```
 
+### Test analysis pipeline
+
+This diagram shows how TestPilot turns recorded test outcomes into actionable analysis. The branches represent **separate analyses**, not a single decision tree: a failed test is not automatically classified as flaky.
+
+```mermaid
+flowchart TD
+    A["JUnit XML or JSON test run"] --> B["Validate and persist results"]
+    B --> C["Group history by test and commit / branch"]
+    C --> D{"Previously passed on this branch?"}
+    D -->|"Yes, now fails"| E["Report functional regression"]
+    D -->|"No or insufficient history"| F["No pass-to-fail regression identified"]
+    C --> G{"Repeated on the same commit?"}
+    G -->|"Yes, conflicting outcomes"| H["Flag confirmed inconsistency"]
+    G -->|"Yes, consistent outcomes"| I["No inconsistency observed"]
+    G -->|"No"| J["Insufficient same-commit data"]
+    C --> K["Calculate failure trends and normalize errors"]
+    K --> L["Failure clusters and reliability analytics"]
+    E --> M["Explainable rerun prioritization"]
+    F --> M
+    H --> M
+    L --> M
+```
+
+**How to read it:** Regression detection compares outcomes over time, while flakiness detection specifically looks for conflicting results on the *same commit*. Failure clusters and reliability trends provide additional context for investigating failures. Rerun recommendations use the platform's heuristic; they are not a machine-learning prediction.
+
 **Tech stack:** Python, FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL/SQLite, pytest, httpx, GitHub Actions, and Render deployment configuration.
 
 **Important distinction:** GitHub Actions produces the performance benchmark report, but it is not automatically imported into the historical performance database. The scheduled JUnit importer also requires a deployed, reachable API and configured credentials.
