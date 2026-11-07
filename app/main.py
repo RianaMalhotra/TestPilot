@@ -5,7 +5,7 @@ import os
 from fastapi import Depends, FastAPI, HTTPException, File, Form, UploadFile
 from defusedxml import ElementTree as SafeET
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, create_engine, select, inspect, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, create_engine, select
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
@@ -62,13 +62,6 @@ class RunIn(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
-    if engine.dialect.name == "sqlite" and "branch" not in {
-        col["name"] for col in inspect(engine).get_columns("runs")
-    }:
-        with engine.begin() as connection:
-            connection.execute(text(
-                "ALTER TABLE runs ADD COLUMN branch VARCHAR(200) NOT NULL DEFAULT 'main'"
-            ))
     yield
 
 

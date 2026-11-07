@@ -107,7 +107,7 @@ python -m scripts.rerun_tests --count 3 --upload-api http://127.0.0.1:8000 --bra
 
 The command uses the current Git HEAD unless you specify `--commit-sha`. All reruns are recorded against the same commit and branch. The API must be running locally first. The command runs local test code, so only use trusted checkouts.
 
-**Database compatibility:** On startup, TestPilot adds the missing `branch` column to older SQLite databases without deleting existing test history. This is a targeted compatibility migration; versioned migrations are a future improvement.
+**Versioned database migrations (Alembic):** For a new database, run `alembic upgrade head` before starting the API. The initial revision creates the current schema. For an existing database that already has both `runs.branch` and `results`, use `alembic stamp head` once after backing up the database. For a legacy database without `runs.branch`, start the earlier compatibility version of TestPilot once to add the column before stamping, or migrate the column manually. **Do not run `alembic upgrade head` against an existing unversioned database**; it will attempt to recreate existing tables. The API retains `create_all` for development convenience, but production deployments should migrate before startup.
 
 ## Testing
 
@@ -122,5 +122,5 @@ A GitHub Actions workflow runs the tests on pushes and pull requests.
 - Import JUnit XML artifacts from GitHub Actions using the GitHub API.
 - Add build and branch isolation for historical comparisons.
 - Improve failure clustering with stack-trace-aware signatures and similarity scoring.
-- Add Alembic versioned migrations and automated GitHub artifact polling.
+- Add follow-up Alembic revisions for future schema changes.
 - Deploy a scheduled poller with shared durable import tracking.
