@@ -133,6 +133,13 @@ def get_db():
         yield session
 
 
+def require_ingest_key(x_api_key: str | None = Header(default=None)):
+    """Require an API key for writes when TESTPILOT_API_KEY is configured."""
+    configured = os.getenv("TESTPILOT_API_KEY")
+    if configured and (not x_api_key or not secrets.compare_digest(x_api_key, configured)):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
 @app.get("/metrics", dependencies=[Depends(require_ingest_key)])
 def metrics():
     """Process-local HTTP request counts; reset when the process restarts."""
@@ -166,12 +173,6 @@ def readiness():
 def health():
     return {"status": "ok"}
 
-
-def require_ingest_key(x_api_key: str | None = Header(default=None)):
-    """Require an API key for writes when TESTPILOT_API_KEY is configured."""
-    configured = os.getenv("TESTPILOT_API_KEY")
-    if configured and (not x_api_key or not secrets.compare_digest(x_api_key, configured)):
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 @app.post("/runs", status_code=201, dependencies=[Depends(require_ingest_key)])
