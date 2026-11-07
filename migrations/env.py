@@ -12,15 +12,24 @@ if config.config_file_name:
 target_metadata = Base.metadata
 
 
-def run_migrations_offline():
+def database_url():
     url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+
+def run_migrations_offline():
+    url = database_url()
     context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online():
-    url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+    url = database_url()
     engine = create_engine(url, poolclass=pool.NullPool)
     with engine.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)

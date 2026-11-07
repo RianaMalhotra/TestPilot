@@ -13,6 +13,10 @@ A backend test intelligence platform that analyzes CI test results, detects flak
 
 **Stack:** Python, FastAPI, SQLAlchemy, SQLite, pytest, GitHub Actions.
 
+## End-to-end validation
+
+Run `python -m pytest -q tests/test_integration_e2e.py` to verify the authenticated JUnit import → persisted run → failure analytics → performance history → regression detection flow against a local test database. The deployment validator also checks that the performance migration exists and that Alembic accepts PostgreSQL URLs. These tests do **not** replace a live Render/PostgreSQL deployment smoke test.
+
 ## Automated CI performance benchmark
 
 After the test suite passes, GitHub Actions runs an in-process smoke benchmark of `GET /health` (100 requests after 10 warmups) and uploads `performance-report.json` as an artifact. Run locally using `python -m scripts.benchmark_api`. Reports include commit SHA, branch, mean and p95 latency, and sample count. This measures the test client and local app, not deployed network performance. CI does not automatically publish to the production API; ingesting reports into the historical performance endpoints remains a future integration step.

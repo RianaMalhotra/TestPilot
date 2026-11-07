@@ -19,6 +19,11 @@ def validate():
         missing.append("psycopg dependency")
     if "TESTPILOT_API_URL" not in workflow:
         missing.append("scheduled importer API URL")
+    migration = Path("migrations/versions/0003_performance_samples.py").read_text()
+    if 'revision = "0003"' not in migration:
+        missing.append("performance migration 0003")
+    if 'def database_url()' not in Path("migrations/env.py").read_text():
+        missing.append("PostgreSQL migration URL normalization")
     if missing:
         raise SystemExit(f"Deployment validation failed: {', '.join(missing)}")
     print("Deployment configuration checks passed")
