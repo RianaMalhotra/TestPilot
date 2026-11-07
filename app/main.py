@@ -6,7 +6,7 @@ import secrets
 from fastapi import Depends, FastAPI, HTTPException, File, Form, UploadFile, Header
 from defusedxml import ElementTree as SafeET
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, UniqueConstraint, create_engine, select
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, UniqueConstraint, create_engine, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
@@ -73,6 +73,8 @@ class RunIn(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
+    if os.getenv("TESTPILOT_REQUIRE_AUTH") == "1" and not os.getenv("TESTPILOT_API_KEY"):
+        raise RuntimeError("TESTPILOT_API_KEY is required in secure mode")
     yield
 
 
@@ -87,6 +89,23 @@ app = FastAPI(
 def get_db():
     with SessionLocal() as session:
         yield session
+
+
+@app.get("/ready")
+def readiness():
+    """Check that the database is reachable and migrations are applied."""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+            if os.getenv("TESTPILOT_REQUIRE_MIGRATIONS") == "1":
+                version = connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one_or_none()
+                if version != "0002":
+                    raise RuntimeError("Database migration version is not current")
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database not ready")
+    return {"status": "ready"}
 
 
 @app.get("/health")
@@ -114,7 +133,7 @@ def create_run(payload: RunIn, db: Session = Depends(get_db)):
     return {"run_id": run.id, "tests_recorded": len(run.results)}
 
 
-@app.get("/runs/{run_id}")
+@app.get("/runs/{run_id}", dependencies=[Depends(require_ingest_key)])
 def get_run(run_id: int, db: Session = Depends(get_db)):
     run = db.get(Run, run_id)
     if run is None:
@@ -135,7 +154,7 @@ def get_run(run_id: int, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/analytics/tests")
+@app.get("/analytics/tests", dependencies=[Depends(require_ingest_key)])
 def test_analytics(db: Session = Depends(get_db)):
     rows = db.execute(
         select(Result, Run.created_at)
@@ -168,7 +187,7 @@ def test_analytics(db: Session = Depends(get_db)):
     )
 
 
-@app.get("/analytics/regressions")
+@app.get("/analytics/regressions", dependencies=[Depends(require_ingest_key)])
 def regressions(db: Session = Depends(get_db)):
     runs = db.scalars(select(Run).order_by(Run.id)).all()
     latest = {}
@@ -189,7 +208,7 @@ def regressions(db: Session = Depends(get_db)):
     return detected
 
 
-@app.get("/recommendations/rerun")
+@app.get("/recommendations/rerun", dependencies=[Depends(require_ingest_key)])
 def rerun_recommendations(db: Session = Depends(get_db)):
     analytics = test_analytics(db)
     # Heuristic: frequent failures and changing outcomes increase rerun priority.
@@ -300,7 +319,7 @@ def _failure_signature(message: str | None) -> str:
     return normalized or "Unknown failure"
 
 
-@app.get("/analytics/failure-clusters")
+@app.get("/analytics/failure-clusters", dependencies=[Depends(require_ingest_key)])
 def failure_clusters(db: Session = Depends(get_db)):
     """Group failures by normalized first-line error signatures."""
     rows = db.execute(
@@ -332,7 +351,7 @@ def failure_clusters(db: Session = Depends(get_db)):
     )
 
 
-@app.get("/analytics/trends")
+@app.get("/analytics/trends", dependencies=[Depends(require_ingest_key)])
 def run_trends(db: Session = Depends(get_db)):
     """Per-run pass/fail history in ingestion order."""
     runs = db.scalars(select(Run).order_by(Run.id)).all()
@@ -351,7 +370,7 @@ def run_trends(db: Session = Depends(get_db)):
     return output
 
 
-@app.get("/analytics/summary")
+@app.get("/analytics/summary", dependencies=[Depends(require_ingest_key)])
 def reliability_summary(db: Session = Depends(get_db)):
     """High-level reliability snapshot across ingested runs."""
     runs = db.scalars(select(Run).order_by(Run.id)).all()
@@ -372,7 +391,7 @@ def reliability_summary(db: Session = Depends(get_db)):
     }
 
 
-@app.get("/analytics/flakiness")
+@app.get("/analytics/flakiness", dependencies=[Depends(require_ingest_key)])
 def flakiness_report(db: Session = Depends(get_db)):
     """Classify tests using repeated executions on the same commit.
 
@@ -414,7 +433,7 @@ def flakiness_report(db: Session = Depends(get_db)):
     return sorted(output, key=lambda item: item["test_name"])
 
 
-@app.get("/analytics/branch-regressions")
+@app.get("/analytics/branch-regressions", dependencies=[Depends(require_ingest_key)])
 def branch_regressions(branch: str, db: Session = Depends(get_db)):
     """Detect pass-to-fail changes within one branch's ingestion history."""
     runs = db.scalars(

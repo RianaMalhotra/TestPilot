@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: testpilot-api
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    preDeployCommand: alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /ready
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: TESTPILOT_REQUIRE_AUTH
+        value: "1"
+      - key: TESTPILOT_REQUIRE_MIGRATIONS
+        value: "1"
+      - key: TESTPILOT_API_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: testpilot-db
+          property: connectionString
+databases:
+  - name: testpilot-db
+    plan: basic-256mb

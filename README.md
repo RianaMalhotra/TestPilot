@@ -13,6 +13,14 @@ A backend test intelligence platform that analyzes CI test results, detects flak
 
 **Stack:** Python, FastAPI, SQLAlchemy, SQLite, pytest, GitHub Actions.
 
+## Production deployment
+
+A Render Blueprint (`render.yaml`) defines a Python web service and managed PostgreSQL database. It uses `alembic upgrade head` before deployment, starts Uvicorn, and checks `/ready`. Review hosting costs and service availability before applying the Blueprint. This repository does **not** provision a deployment automatically.
+
+For any public deployment, set `TESTPILOT_REQUIRE_AUTH=1` and a strong `TESTPILOT_API_KEY`. When the key is set, the API requires `X-API-Key` for ingestion, analytics, recommendations, and individual run retrieval. `/health` and `/ready` remain public for monitoring. Set `TESTPILOT_REQUIRE_MIGRATIONS=1` to require the latest Alembic revision in the readiness check.
+
+**Important:** PostgreSQL requires a compatible database driver. The deployment configuration should be validated with your chosen Render plan before production use. Do not store secrets in source control.
+
 ## Quick start
 
 Requires Python 3.12 or newer.
@@ -38,7 +46,8 @@ curl -X POST http://127.0.0.1:8000/runs \
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /health` | Health check |
+| `GET /health` | Process health check |
+| `GET /ready` | Database readiness check |
 | `POST /runs` | Record a CI test run as JSON |
 | `POST /runs/junit` | Upload JUnit XML (multipart form) |
 | `GET /runs/{run_id}` | Retrieve run details |
@@ -82,7 +91,7 @@ On Windows PowerShell, set the token with `$env:GITHUB_TOKEN="..."`. The token m
 
 ## API authentication and scheduled ingestion
 
-Set `TESTPILOT_API_KEY` on the TestPilot backend to require an `X-API-Key` header for `POST /runs` and `POST /runs/junit`. If the variable is unset, writes remain unauthenticated for local development; **set it in any public deployment**. Analytics endpoints remain publicly readable, so do not expose sensitive test data without additional access controls.
+Set `TESTPILOT_API_KEY` on the TestPilot backend to require an `X-API-Key` header for `POST /runs` and `POST /runs/junit`. If the variable is unset, writes remain unauthenticated for local development; **set it in any public deployment**. Analytics endpoints and run details require the same key when configured; health and readiness checks remain public.
 
 The `Import CI Reports` GitHub Actions workflow runs every six hours (or manually). To enable it, configure repository variable `TESTPILOT_API_URL` with your deployed HTTPS backend URL and secret `TESTPILOT_API_KEY` with the same key configured on the backend. The workflow does nothing until the URL variable is configured. GitHub-hosted runners cannot reach a backend running only on localhost.
 
