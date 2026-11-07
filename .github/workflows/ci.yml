@@ -11,6 +11,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
+      - name: Validate deployment configuration
+        run: python -m scripts.validate_deployment
       - name: Run tests and generate JUnit report
         run: python -m pytest -q --junitxml=report.xml
       - name: Upload JUnit report

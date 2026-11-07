@@ -13,6 +13,12 @@ A backend test intelligence platform that analyzes CI test results, detects flak
 
 **Stack:** Python, FastAPI, SQLAlchemy, SQLite, pytest, GitHub Actions.
 
+## Observability
+
+TestPilot emits JSON request logs with a request ID, method, route template, response status, and duration. Each HTTP response includes `X-Request-ID`. The authenticated `GET /metrics` endpoint exposes process-local request counts by route and status; these counters reset on restart and are not shared across multiple workers. No request bodies or API keys are logged.
+
+Validate the deployment configuration locally with `python -m scripts.validate_deployment`. CI runs the same check. This validates required configuration fields, not actual hosting availability, secrets, or live database connectivity.
+
 ## Production deployment
 
 A Render Blueprint (`render.yaml`) defines a Python web service and managed PostgreSQL database. It uses `alembic upgrade head` before deployment, starts Uvicorn, and checks `/ready`. Review hosting costs and service availability before applying the Blueprint. This repository does **not** provision a deployment automatically.
@@ -48,6 +54,7 @@ curl -X POST http://127.0.0.1:8000/runs \
 | --- | --- |
 | `GET /health` | Process health check |
 | `GET /ready` | Database readiness check |
+| `GET /metrics` | Authenticated, process-local HTTP request counters |
 | `POST /runs` | Record a CI test run as JSON |
 | `POST /runs/junit` | Upload JUnit XML (multipart form) |
 | `GET /runs/{run_id}` | Retrieve run details |

@@ -2,8 +2,14 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import os
 import secrets
+import json
+import logging
+import time
+from collections import Counter
+from threading import Lock
+from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, File, Form, UploadFile, Header
+from fastapi import Depends, FastAPI, HTTPException, File, Form, UploadFile, Header, Request
 from defusedxml import ElementTree as SafeET
 from pydantic import BaseModel, Field
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, UniqueConstraint, create_engine, select, text
@@ -82,6 +88,11 @@ async def lifespan(app: FastAPI):
     yield
 
 
+logger = logging.getLogger("testpilot.requests")
+_request_counts = Counter()
+_request_lock = Lock()
+
+
 app = FastAPI(
     title="TestPilot",
     description="Backend test intelligence and regression analytics",
@@ -90,9 +101,48 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def request_observability(request: Request, call_next):
+    request_id = str(uuid4())
+    started = time.perf_counter()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers["X-Request-ID"] = request_id
+        return response
+    finally:
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        # Use the route template when available, not raw URLs with sensitive IDs.
+        route = request.scope.get("route")
+        path = getattr(route, "path", "unmatched")
+        with _request_lock:
+            _request_counts[(request.method, path, status)] += 1
+        logger.info(json.dumps({
+            "event": "http_request",
+            "request_id": request_id,
+            "method": request.method,
+            "route": path,
+            "status": status,
+            "duration_ms": duration_ms,
+        }))
+
+
 def get_db():
     with SessionLocal() as session:
         yield session
+
+
+@app.get("/metrics", dependencies=[Depends(require_ingest_key)])
+def metrics():
+    """Process-local HTTP request counts; reset when the process restarts."""
+    with _request_lock:
+        return {
+            "requests": [
+                {"method": method, "route": route, "status": status, "count": count}
+                for (method, route, status), count in sorted(_request_counts.items())
+            ]
+        }
 
 
 @app.get("/ready")
