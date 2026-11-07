@@ -19,7 +19,7 @@ A Render Blueprint (`render.yaml`) defines a Python web service and managed Post
 
 For any public deployment, set `TESTPILOT_REQUIRE_AUTH=1` and a strong `TESTPILOT_API_KEY`. When the key is set, the API requires `X-API-Key` for ingestion, analytics, recommendations, and individual run retrieval. `/health` and `/ready` remain public for monitoring. Set `TESTPILOT_REQUIRE_MIGRATIONS=1` to require the latest Alembic revision in the readiness check.
 
-**Important:** PostgreSQL requires a compatible database driver. The deployment configuration should be validated with your chosen Render plan before production use. Do not store secrets in source control.
+PostgreSQL uses the psycopg 3 driver. Validate the Render plan, database connection, and migration lifecycle before production use. Do not store secrets in source control.
 
 ## Quick start
 
