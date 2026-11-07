@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, File, Form, UploadFile, Header, Request
 from defusedxml import ElementTree as SafeET
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, UniqueConstraint, create_engine, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
@@ -65,6 +65,36 @@ class GitHubImport(Base):
     repository: Mapped[str] = mapped_column(String(250))
     workflow_run_id: Mapped[int] = mapped_column()
     run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"))
+
+
+class PerformanceSample(Base):
+    __tablename__ = "performance_samples"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    commit_sha: Mapped[str] = mapped_column(String(100))
+    branch: Mapped[str] = mapped_column(String(200))
+    method: Mapped[str] = mapped_column(String(12))
+    route: Mapped[str] = mapped_column(String(500))
+    p95_ms: Mapped[float] = mapped_column(Float)
+    sample_count: Mapped[int] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class PerformanceIn(BaseModel):
+    commit_sha: str = Field(min_length=1, max_length=100)
+    branch: str = Field(default="main", min_length=1, max_length=200)
+    method: str = Field(min_length=1, max_length=12)
+    route: str = Field(min_length=1, max_length=500)
+    p95_ms: float = Field(ge=0, allow_inf_nan=False)
+    sample_count: int = Field(ge=1)
+
+    @field_validator("route")
+    @classmethod
+    def route_template(cls, value):
+        if not value.startswith("/"):
+            raise ValueError("route must start with /")
+        return value
 
 
 class TestResultIn(BaseModel):
@@ -166,6 +196,63 @@ def metrics():
         }
 
 
+@app.post("/performance/samples", status_code=201, dependencies=[Depends(require_ingest_key)])
+def record_performance(payload: PerformanceIn, db: Session = Depends(get_db)):
+    sample = PerformanceSample(**payload.model_dump())
+    db.add(sample)
+    db.commit()
+    db.refresh(sample)
+    return {"sample_id": sample.id}
+
+
+@app.get("/performance/trends", dependencies=[Depends(require_ingest_key)])
+def performance_trends(branch: str = "main", method: str | None = None,
+                       route: str | None = None, limit: int = 100,
+                       db: Session = Depends(get_db)):
+    if not 1 <= limit <= 500:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
+    statement = select(PerformanceSample).where(PerformanceSample.branch == branch)
+    if method:
+        statement = statement.where(PerformanceSample.method == method)
+    if route:
+        statement = statement.where(PerformanceSample.route == route)
+    samples = db.scalars(statement.order_by(
+        PerformanceSample.created_at.desc(), PerformanceSample.id.desc()
+    ).limit(limit)).all()
+    return [{"sample_id": s.id, "commit_sha": s.commit_sha, "branch": s.branch,
+             "method": s.method, "route": s.route, "p95_ms": s.p95_ms,
+             "sample_count": s.sample_count} for s in reversed(samples)]
+
+
+@app.get("/performance/regressions", dependencies=[Depends(require_ingest_key)])
+def performance_regressions(branch: str = "main", threshold_pct: float = 20,
+                            db: Session = Depends(get_db)):
+    if not 0 <= threshold_pct <= 1000:
+        raise HTTPException(status_code=422, detail="threshold_pct must be between 0 and 1000")
+    samples = db.scalars(select(PerformanceSample).where(
+        PerformanceSample.branch == branch
+    ).order_by(PerformanceSample.created_at, PerformanceSample.id)).all()
+    previous = {}
+    regressions = []
+    for sample in samples:
+        key = (sample.method, sample.route)
+        baseline = previous.get(key)
+        if baseline is not None and baseline.commit_sha != sample.commit_sha:
+            if baseline.p95_ms > 0:
+                change_pct = (sample.p95_ms - baseline.p95_ms) / baseline.p95_ms * 100
+                if change_pct >= threshold_pct:
+                    regressions.append({
+                        "method": sample.method, "route": sample.route,
+                        "baseline_commit": baseline.commit_sha,
+                        "current_commit": sample.commit_sha,
+                        "baseline_p95_ms": baseline.p95_ms,
+                        "current_p95_ms": sample.p95_ms,
+                        "increase_pct": round(change_pct, 2),
+                    })
+        previous[key] = sample
+    return regressions
+
+
 @app.get("/ready")
 def readiness():
     """Check that the database is reachable and migrations are applied."""
@@ -176,7 +263,7 @@ def readiness():
                 version = connection.execute(
                     text("SELECT version_num FROM alembic_version")
                 ).scalar_one_or_none()
-                if version != "0002":
+                if version != "0003":
                     raise RuntimeError("Database migration version is not current")
     except Exception:
         raise HTTPException(status_code=503, detail="Database not ready")

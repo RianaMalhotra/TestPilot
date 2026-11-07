@@ -13,6 +13,10 @@ A backend test intelligence platform that analyzes CI test results, detects flak
 
 **Stack:** Python, FastAPI, SQLAlchemy, SQLite, pytest, GitHub Actions.
 
+## Historical performance regression detection
+
+Record measured p95 latency per commit using `POST /performance/samples` with `commit_sha`, `branch`, `method`, `route`, `p95_ms`, and `sample_count`. Query persisted measurements with `GET /performance/trends` and detect per-route slowdowns with `GET /performance/regressions?threshold_pct=20`. Regression comparisons use the previous recorded sample for the same branch, method, and route when the commit changes; a positive baseline is required. These are **reported measurements**, not automatic benchmarks; consistent load conditions are important for meaningful comparisons.
+
 ## Observability
 
 TestPilot emits JSON request logs with a request ID, method, route template, response status, and duration. Each HTTP response includes `X-Request-ID`. The authenticated `GET /metrics` endpoint exposes process-local request counts by route and status, plus rolling latency statistics (average, maximum, and p95) based on up to 500 recent requests per route. These counters reset on restart and are not shared across multiple workers. Set `TESTPILOT_SLOW_REQUEST_MS` to configure the slow-request warning threshold (default 1000 ms); warnings are emitted as structured JSON. No request bodies or API keys are logged.
@@ -55,6 +59,9 @@ curl -X POST http://127.0.0.1:8000/runs \
 | `GET /health` | Process health check |
 | `GET /ready` | Database readiness check |
 | `GET /metrics` | Authenticated, process-local HTTP request counters |
+| `POST /performance/samples` | Persist commit-specific latency measurements |
+| `GET /performance/trends` | Historical API latency measurements |
+| `GET /performance/regressions` | Detect latency increases between recorded commits |
 | `POST /runs` | Record a CI test run as JSON |
 | `POST /runs/junit` | Upload JUnit XML (multipart form) |
 | `GET /runs/{run_id}` | Retrieve run details |
