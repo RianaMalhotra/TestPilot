@@ -15,7 +15,7 @@ A backend test intelligence platform that analyzes CI test results, detects flak
 
 ## Observability
 
-TestPilot emits JSON request logs with a request ID, method, route template, response status, and duration. Each HTTP response includes `X-Request-ID`. The authenticated `GET /metrics` endpoint exposes process-local request counts by route and status; these counters reset on restart and are not shared across multiple workers. No request bodies or API keys are logged.
+TestPilot emits JSON request logs with a request ID, method, route template, response status, and duration. Each HTTP response includes `X-Request-ID`. The authenticated `GET /metrics` endpoint exposes process-local request counts by route and status, plus rolling latency statistics (average, maximum, and p95) based on up to 500 recent requests per route. These counters reset on restart and are not shared across multiple workers. Set `TESTPILOT_SLOW_REQUEST_MS` to configure the slow-request warning threshold (default 1000 ms); warnings are emitted as structured JSON. No request bodies or API keys are logged.
 
 Validate the deployment configuration locally with `python -m scripts.validate_deployment`. CI runs the same check. This validates required configuration fields, not actual hosting availability, secrets, or live database connectivity.
 

@@ -5,7 +5,7 @@ import secrets
 import json
 import logging
 import time
-from collections import Counter
+from collections import Counter, defaultdict, deque
 from threading import Lock
 from uuid import uuid4
 
@@ -90,6 +90,7 @@ async def lifespan(app: FastAPI):
 
 logger = logging.getLogger("testpilot.requests")
 _request_counts = Counter()
+_request_durations = defaultdict(lambda: deque(maxlen=500))
 _request_lock = Lock()
 
 
@@ -118,6 +119,12 @@ async def request_observability(request: Request, call_next):
         path = getattr(route, "path", "unmatched")
         with _request_lock:
             _request_counts[(request.method, path, status)] += 1
+            _request_durations[(request.method, path)].append(duration_ms)
+        logger.warning(json.dumps({
+            "event": "slow_request", "request_id": request_id,
+            "method": request.method, "route": path,
+            "duration_ms": duration_ms,
+        })) if duration_ms >= float(os.getenv("TESTPILOT_SLOW_REQUEST_MS", "1000")) else None
         logger.info(json.dumps({
             "event": "http_request",
             "request_id": request_id,
@@ -142,12 +149,19 @@ def require_ingest_key(x_api_key: str | None = Header(default=None)):
 
 @app.get("/metrics", dependencies=[Depends(require_ingest_key)])
 def metrics():
-    """Process-local HTTP request counts; reset when the process restarts."""
+    """Process-local HTTP request counts and rolling latency; reset on restart."""
     with _request_lock:
         return {
             "requests": [
                 {"method": method, "route": route, "status": status, "count": count}
                 for (method, route, status), count in sorted(_request_counts.items())
+            ],
+            "latency": [
+                {"method": method, "route": route, "samples": len(samples),
+                 "average_ms": round(sum(samples) / len(samples), 2),
+                 "max_ms": max(samples),
+                 "p95_ms": sorted(samples)[max(0, (95 * len(samples) + 99) // 100 - 1)]}
+                for (method, route), samples in sorted(_request_durations.items()) if samples
             ]
         }
 
