@@ -4,7 +4,7 @@ A backend test intelligence platform that analyzes CI test results, detects flak
 
 ## Features
 
-- Ingest test execution results into a SQLite database via a REST API.
+- Ingest JSON results or JUnit XML reports from pytest/CI into SQLite via a REST API.
 - Track test execution history, failure rates, average runtimes, and status transitions.
 - Detect pass-to-fail regressions and rank tests for rerun using a transparent heuristic.
 - Automatically test the backend on GitHub Actions.
@@ -37,13 +37,30 @@ curl -X POST http://127.0.0.1:8000/runs \
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health` | Health check |
-| `POST /runs` | Record a CI test run |
+| `POST /runs` | Record a CI test run as JSON |
+| `POST /runs/junit` | Upload JUnit XML (multipart form) |
 | `GET /runs/{run_id}` | Retrieve run details |
 | `GET /analytics/tests` | Failure rates and status transitions |
 | `GET /analytics/regressions` | Detect pass-to-fail changes |
 | `GET /recommendations/rerun` | Rank tests for reruns |
 
 The MVP uses a simple transition-based *flakiness heuristic*. An outcome change can also reflect a real code fix or regression; more advanced classification will distinguish these cases.
+
+## Import a real pytest report
+
+Generate a JUnit report:
+
+```bash
+python -m pytest --junitxml=report.xml
+```
+
+With the API running, import it:
+
+```bash
+curl -X POST http://127.0.0.1:8000/runs/junit -F 'commit_sha=abc123' -F 'file=@report.xml'
+```
+
+Skipped testcases are excluded; failed/error testcases are recorded as failures. Maximum upload size is 5 MiB. This MVP imports reports manually; automatic CI artifact ingestion is a future milestone.
 
 ## Testing
 
@@ -55,7 +72,7 @@ A GitHub Actions workflow runs the tests on pushes and pull requests.
 
 ## Roadmap
 
-- Import JUnit XML from pytest and CI pipelines.
+- Automatically fetch JUnit XML artifacts from CI pipelines.
 - Add build and branch isolation for historical comparisons.
 - Classify failure signatures and recurring errors.
 - Improve flakiness detection with same-commit reruns.

@@ -2,7 +2,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import os
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, File, Form, UploadFile
+from defusedxml import ElementTree as SafeET
 from pydantic import BaseModel, Field
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, create_engine, select
 from sqlalchemy.pool import StaticPool
@@ -181,3 +182,56 @@ def rerun_recommendations(db: Session = Depends(get_db)):
         for item in analytics
     ]
     return sorted(ranked, key=lambda x: (-x["priority_score"], x["test_name"]))
+
+
+@app.post("/runs/junit", status_code=201)
+async def import_junit(
+    file: UploadFile = File(...),
+    commit_sha: str = Form(..., min_length=1, max_length=100),
+    db: Session = Depends(get_db),
+):
+    """Import JUnit XML from pytest or another CI test runner."""
+    if not file.filename or not file.filename.lower().endswith(".xml"):
+        raise HTTPException(status_code=422, detail="Upload a .xml test report")
+    # Limit uploads to 5 MiB, even if Content-Length is absent.
+    raw = await file.read(5 * 1024 * 1024 + 1)
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Report exceeds 5 MiB")
+    try:
+        root = SafeET.fromstring(raw)
+    except (SafeET.ParseError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid or unsafe JUnit XML") from exc
+    if root.tag not in ("testsuite", "testsuites"):
+        raise HTTPException(status_code=422, detail="Expected testsuite or testsuites root")
+
+    parsed = []
+    seen = set()
+    for case in root.iter("testcase"):
+        name = case.get("name")
+        if not name:
+            raise HTTPException(status_code=422, detail="Testcase missing name")
+        classname = case.get("classname", "")
+        test_name = f"{classname}::{name}" if classname else name
+        if test_name in seen or len(test_name) > 500:
+            raise HTTPException(status_code=422, detail="Duplicate or oversized test name")
+        seen.add(test_name)
+        try:
+            duration = float(case.get("time", "0")) * 1000
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Invalid testcase duration") from exc
+        if not 0 <= duration < float("inf"):
+            raise HTTPException(status_code=422, detail="Invalid testcase duration")
+        failure = next((child for child in case if child.tag in ("failure", "error")), None)
+        skipped = any(child.tag == "skipped" for child in case)
+        if skipped:
+            continue  # Skipped tests have no pass/fail result.
+        message = (failure.get("message") or failure.text or "")[:2000] if failure is not None else None
+        parsed.append(Result(test_name=test_name, passed=failure is None,
+                             duration_ms=duration, error_message=message))
+    if not parsed:
+        raise HTTPException(status_code=422, detail="No executed testcases found")
+    run = Run(commit_sha=commit_sha, results=parsed)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return {"run_id": run.id, "tests_recorded": len(parsed), "format": "junit"}
