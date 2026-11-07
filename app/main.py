@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import os
+import secrets
 
-from fastapi import Depends, FastAPI, HTTPException, File, Form, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, File, Form, UploadFile, Header
 from defusedxml import ElementTree as SafeET
 from pydantic import BaseModel, Field
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, UniqueConstraint, create_engine, select
@@ -93,7 +94,14 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/runs", status_code=201)
+def require_ingest_key(x_api_key: str | None = Header(default=None)):
+    """Require an API key for writes when TESTPILOT_API_KEY is configured."""
+    configured = os.getenv("TESTPILOT_API_KEY")
+    if configured and (not x_api_key or not secrets.compare_digest(x_api_key, configured)):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+@app.post("/runs", status_code=201, dependencies=[Depends(require_ingest_key)])
 def create_run(payload: RunIn, db: Session = Depends(get_db)):
     names = [r.test_name for r in payload.results]
     if len(names) != len(set(names)):
@@ -197,7 +205,7 @@ def rerun_recommendations(db: Session = Depends(get_db)):
     return sorted(ranked, key=lambda x: (-x["priority_score"], x["test_name"]))
 
 
-@app.post("/runs/junit", status_code=201)
+@app.post("/runs/junit", status_code=201, dependencies=[Depends(require_ingest_key)])
 async def import_junit(
     file: UploadFile = File(...),
     commit_sha: str = Form(..., min_length=1, max_length=100),

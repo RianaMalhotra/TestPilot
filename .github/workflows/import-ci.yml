@@ -1,0 +1,25 @@
+name: Import CI Reports
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */6 * * *'
+permissions:
+  actions: read
+  contents: read
+jobs:
+  import:
+    if: ${{ vars.TESTPILOT_API_URL != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install httpx
+      - name: Import recent CI reports
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TESTPILOT_API_KEY: ${{ secrets.TESTPILOT_API_KEY }}
+          TESTPILOT_API_URL: ${{ vars.TESTPILOT_API_URL }}
+        run: |
+          python -m scripts.poll_github_artifacts --repo "${{ github.repository }}" --api "$TESTPILOT_API_URL" --limit 100

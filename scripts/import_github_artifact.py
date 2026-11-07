@@ -41,7 +41,7 @@ def extract_report(content: bytes) -> bytes:
         raise ValueError("Invalid GitHub artifact ZIP") from exc
 
 
-def import_run(repo: str, run_id: int, api: str, token: str, artifact_name="testpilot-junit"):
+def import_run(repo: str, run_id: int, api: str, token: str, artifact_name="testpilot-junit", api_key=None):
     if not token:
         raise ValueError("GITHUB_TOKEN is required")
     headers = {
@@ -78,6 +78,7 @@ def import_run(repo: str, run_id: int, api: str, token: str, artifact_name="test
             data={"commit_sha": sha, "branch": branch,
                   "github_repository": repo, "github_run_id": str(run_id)},
             files={"file": ("report.xml", report, "application/xml")},
+            headers={"X-API-Key": api_key} if api_key else {},
         )
         upload.raise_for_status()
         return upload.json()
@@ -89,7 +90,8 @@ def main():
     parser.add_argument("--run-id", type=int, required=True)
     parser.add_argument("--api", default="http://127.0.0.1:8000")
     args = parser.parse_args()
-    print(import_run(args.repo, args.run_id, args.api, os.getenv("GITHUB_TOKEN", "")))
+    print(import_run(args.repo, args.run_id, args.api, os.getenv("GITHUB_TOKEN", ""),
+                     api_key=os.getenv("TESTPILOT_API_KEY")))
 
 
 if __name__ == "__main__":

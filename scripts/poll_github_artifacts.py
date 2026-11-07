@@ -14,7 +14,7 @@ from scripts.import_github_artifact import import_run
 API_ROOT = "https://api.github.com"
 
 
-def poll(repo, api, token, state_path, limit=20, importer=import_run):
+def poll(repo, api, token, state_path, limit=20, importer=import_run, api_key=None):
     if not token:
         raise ValueError("GITHUB_TOKEN is required")
     if not 1 <= limit <= 100:
@@ -42,7 +42,9 @@ def poll(repo, api, token, state_path, limit=20, importer=import_run):
         if run_id in processed:
             continue
         try:
-            result = importer(repo, run_id, api, token)
+            result = importer(repo, run_id, api, token) if api_key is None else importer(
+                repo, run_id, api, token, api_key=api_key
+            )
         except (ValueError, httpx.HTTPError) as exc:
             # Keep failed imports retryable; report failures to the caller.
             raise RuntimeError(f"Failed to import GitHub run {run_id}: {exc}") from exc
@@ -63,7 +65,8 @@ def main():
     parser.add_argument("--state", default=".testpilot-poll-state.json")
     parser.add_argument("--limit", type=int, default=20)
     args = parser.parse_args()
-    for item in poll(args.repo, args.api, os.getenv("GITHUB_TOKEN", ""), args.state, args.limit):
+    for item in poll(args.repo, args.api, os.getenv("GITHUB_TOKEN", ""), args.state, args.limit,
+                     api_key=os.getenv("TESTPILOT_API_KEY")):
         print(item)
 
 

@@ -80,6 +80,12 @@ python -m scripts.import_github_artifact --repo RianaMalhotra/TestPilot --run-id
 
 On Windows PowerShell, set the token with `$env:GITHUB_TOKEN="..."`. The token must have permission to read Actions artifacts (for private repositories, Actions: read). Never commit tokens. The importer retrieves the run's commit SHA, downloads its JUnit artifact, validates the archive, and submits the XML to the backend. This is a **manual command**, not a background webhook or scheduled ingestion service. Artifact retention is 14 days.
 
+## API authentication and scheduled ingestion
+
+Set `TESTPILOT_API_KEY` on the TestPilot backend to require an `X-API-Key` header for `POST /runs` and `POST /runs/junit`. If the variable is unset, writes remain unauthenticated for local development; **set it in any public deployment**. Analytics endpoints remain publicly readable, so do not expose sensitive test data without additional access controls.
+
+The `Import CI Reports` GitHub Actions workflow runs every six hours (or manually). To enable it, configure repository variable `TESTPILOT_API_URL` with your deployed HTTPS backend URL and secret `TESTPILOT_API_KEY` with the same key configured on the backend. The workflow does nothing until the URL variable is configured. GitHub-hosted runners cannot reach a backend running only on localhost.
+
 ## Poll GitHub Actions artifacts
 
 Poll the most recent completed workflow runs and ingest their JUnit artifacts into a running TestPilot API:
@@ -123,4 +129,4 @@ A GitHub Actions workflow runs the tests on pushes and pull requests.
 - Add build and branch isolation for historical comparisons.
 - Improve failure clustering with stack-trace-aware signatures and similarity scoring.
 - Add follow-up Alembic revisions for future schema changes.
-- Deploy a scheduled poller and add authentication to ingestion endpoints.
+- Add authenticated analytics access, rate limits, and production monitoring.
