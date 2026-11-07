@@ -318,3 +318,45 @@ def reliability_summary(db: Session = Depends(get_db)):
         "tests_with_status_changes": sum(item["flaky"] for item in tests),
         "failure_clusters": len(failure_clusters(db)),
     }
+
+
+@app.get("/analytics/flakiness")
+def flakiness_report(db: Session = Depends(get_db)):
+    """Classify tests using repeated executions on the same commit.
+
+    A pass and failure on the same commit is strong evidence of an
+    inconsistent test outcome. Cross-commit transitions alone are not.
+    """
+    rows = db.execute(
+        select(Result, Run.commit_sha)
+        .join(Run)
+        .order_by(Run.id, Result.id)
+    ).all()
+    history = {}
+    for result, sha in rows:
+        test = history.setdefault(result.test_name, {})
+        test.setdefault(sha, []).append(result.passed)
+
+    output = []
+    for name, commits in history.items():
+        inconsistent = sorted(
+            sha for sha, statuses in commits.items()
+            if len(statuses) >= 2 and len(set(statuses)) > 1
+        )
+        repeated = sum(len(statuses) >= 2 for statuses in commits.values())
+        total = sum(map(len, commits.values()))
+        if inconsistent:
+            classification = "confirmed_inconsistent"
+        elif repeated:
+            classification = "no_inconsistency_observed"
+        else:
+            classification = "insufficient_same_commit_data"
+        output.append({
+            "test_name": name,
+            "classification": classification,
+            "executions": total,
+            "commits_observed": len(commits),
+            "commits_with_repeated_executions": repeated,
+            "inconsistent_commits": inconsistent,
+        })
+    return sorted(output, key=lambda item: item["test_name"])

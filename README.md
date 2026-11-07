@@ -47,8 +47,9 @@ curl -X POST http://127.0.0.1:8000/runs \
 | `GET /analytics/failure-clusters` | Group similar failure messages |
 | `GET /analytics/trends` | View per-run pass rates |
 | `GET /analytics/summary` | View overall reliability statistics |
+| `GET /analytics/flakiness` | Classify inconsistent outcomes on identical commits |
 
-Failure clusters use first-line message normalization (numbers and hexadecimal addresses), not semantic similarity. The MVP uses a simple transition-based *flakiness heuristic*. An outcome change can also reflect a real code fix or regression; more advanced classification will distinguish these cases.
+Failure clusters use first-line message normalization (numbers and hexadecimal addresses), not semantic similarity. The original `/analytics/tests` endpoint retains a simple transition-based *flakiness heuristic*. The dedicated `/analytics/flakiness` endpoint instead requires repeated executions on the same commit to identify inconsistent outcomes. An outcome change can also reflect a real code fix or regression; more advanced classification will distinguish these cases.
 
 ## Import a real pytest report
 
@@ -90,7 +91,7 @@ A GitHub Actions workflow runs the tests on pushes and pull requests.
 - Import JUnit XML artifacts from GitHub Actions using the GitHub API.
 - Add build and branch isolation for historical comparisons.
 - Improve failure clustering with stack-trace-aware signatures and similarity scoring.
-- Improve flakiness detection with same-commit reruns.
+- Automate same-commit reruns and add branch-aware regression analysis.
 - Add automatic ingestion via scheduled polling or an authenticated webhook.
 
 ## License
