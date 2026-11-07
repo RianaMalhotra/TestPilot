@@ -235,3 +235,86 @@ async def import_junit(
     db.commit()
     db.refresh(run)
     return {"run_id": run.id, "tests_recorded": len(parsed), "format": "junit"}
+
+
+def _failure_signature(message: str | None) -> str:
+    """Normalize common volatile details so repeated failures group together."""
+    import re
+
+    normalized = (message or "Unknown failure").strip().splitlines()[0][:500]
+    normalized = re.sub(r"0x[0-9a-fA-F]+", "<hex>", normalized)
+    normalized = re.sub(r"\b\d+\b", "<num>", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized or "Unknown failure"
+
+
+@app.get("/analytics/failure-clusters")
+def failure_clusters(db: Session = Depends(get_db)):
+    """Group failures by normalized first-line error signatures."""
+    rows = db.execute(
+        select(Result, Run.commit_sha)
+        .join(Run)
+        .where(Result.passed.is_(False))
+        .order_by(Result.run_id, Result.id)
+    ).all()
+    clusters = {}
+    for result, sha in rows:
+        signature = _failure_signature(result.error_message)
+        group = clusters.setdefault(signature, {
+            "signature": signature,
+            "occurrences": 0,
+            "affected_tests": set(),
+            "commits": set(),
+        })
+        group["occurrences"] += 1
+        group["affected_tests"].add(result.test_name)
+        group["commits"].add(sha)
+    return sorted(
+        [{
+            "signature": group["signature"],
+            "occurrences": group["occurrences"],
+            "affected_tests": sorted(group["affected_tests"]),
+            "distinct_commits": len(group["commits"]),
+        } for group in clusters.values()],
+        key=lambda item: (-item["occurrences"], item["signature"]),
+    )
+
+
+@app.get("/analytics/trends")
+def run_trends(db: Session = Depends(get_db)):
+    """Per-run pass/fail history in ingestion order."""
+    runs = db.scalars(select(Run).order_by(Run.id)).all()
+    output = []
+    for run in runs:
+        total = len(run.results)
+        failures = sum(not result.passed for result in run.results)
+        output.append({
+            "run_id": run.id,
+            "commit_sha": run.commit_sha,
+            "total": total,
+            "passed": total - failures,
+            "failed": failures,
+            "pass_rate": round((total - failures) / total, 3) if total else None,
+        })
+    return output
+
+
+@app.get("/analytics/summary")
+def reliability_summary(db: Session = Depends(get_db)):
+    """High-level reliability snapshot across ingested runs."""
+    runs = db.scalars(select(Run).order_by(Run.id)).all()
+    all_results = [result for run in runs for result in run.results]
+    failed = sum(not result.passed for result in all_results)
+    tests = test_analytics(db)
+    return {
+        "runs": len(runs),
+        "executions": len(all_results),
+        "failures": failed,
+        "overall_pass_rate": (
+            round((len(all_results) - failed) / len(all_results), 3)
+            if all_results else None
+        ),
+        "unique_tests": len(tests),
+        "tests_with_status_changes": sum(item["flaky"] for item in tests),
+        "failure_clusters": len(failure_clusters(db)),
+    }

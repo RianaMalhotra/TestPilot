@@ -5,7 +5,8 @@ A backend test intelligence platform that analyzes CI test results, detects flak
 ## Features
 
 - Ingest JSON results or JUnit XML reports from pytest/CI into SQLite via a REST API.
-- Track test execution history, failure rates, average runtimes, and status transitions.
+- Track test execution history, failure rates, average runtimes, status transitions, and per-run trends.
+- Cluster recurring failures using normalized error-message signatures.
 - Detect pass-to-fail regressions and rank tests for rerun using a transparent heuristic.
 - Automatically test the backend on GitHub Actions.
 
@@ -43,8 +44,11 @@ curl -X POST http://127.0.0.1:8000/runs \
 | `GET /analytics/tests` | Failure rates and status transitions |
 | `GET /analytics/regressions` | Detect pass-to-fail changes |
 | `GET /recommendations/rerun` | Rank tests for reruns |
+| `GET /analytics/failure-clusters` | Group similar failure messages |
+| `GET /analytics/trends` | View per-run pass rates |
+| `GET /analytics/summary` | View overall reliability statistics |
 
-The MVP uses a simple transition-based *flakiness heuristic*. An outcome change can also reflect a real code fix or regression; more advanced classification will distinguish these cases.
+Failure clusters use first-line message normalization (numbers and hexadecimal addresses), not semantic similarity. The MVP uses a simple transition-based *flakiness heuristic*. An outcome change can also reflect a real code fix or regression; more advanced classification will distinguish these cases.
 
 ## Import a real pytest report
 
@@ -85,7 +89,7 @@ A GitHub Actions workflow runs the tests on pushes and pull requests.
 
 - Import JUnit XML artifacts from GitHub Actions using the GitHub API.
 - Add build and branch isolation for historical comparisons.
-- Classify failure signatures and recurring errors.
+- Improve failure clustering with stack-trace-aware signatures and similarity scoring.
 - Improve flakiness detection with same-commit reruns.
 - Add automatic ingestion via scheduled polling or an authenticated webhook.
 
