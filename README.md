@@ -107,7 +107,3 @@ A GitHub Actions workflow runs the tests on pushes and pull requests.
 - Improve failure clustering with stack-trace-aware signatures and similarity scoring.
 - Automatically ingest rerun reports and add database migrations.
 - Add automatic ingestion via scheduled polling or an authenticated webhook.
-
-## License
-
-No license has been selected yet.
