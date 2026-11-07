@@ -80,6 +80,17 @@ python -m scripts.import_github_artifact --repo RianaMalhotra/TestPilot --run-id
 
 On Windows PowerShell, set the token with `$env:GITHUB_TOKEN="..."`. The token must have permission to read Actions artifacts (for private repositories, Actions: read). Never commit tokens. The importer retrieves the run's commit SHA, downloads its JUnit artifact, validates the archive, and submits the XML to the backend. This is a **manual command**, not a background webhook or scheduled ingestion service. Artifact retention is 14 days.
 
+## Poll GitHub Actions artifacts
+
+Poll the most recent completed workflow runs and ingest their JUnit artifacts into a running TestPilot API:
+
+```bash
+export GITHUB_TOKEN=your_github_token
+python -m scripts.poll_github_artifacts --repo RianaMalhotra/TestPilot --api http://127.0.0.1:8000
+```
+
+The poller remembers successfully imported GitHub run IDs in `.testpilot-poll-state.json`, so repeated invocations skip previously imported runs. Failed imports remain retryable. Schedule the command externally (cron, Task Scheduler, or a persistent worker) for ongoing ingestion. It does not run continuously on its own. The state file is local, not shared across machines; concurrent pollers and importing the same run by another method can create duplicates. Only runs among the latest 20 completed runs (configurable with `--limit`) are examined per poll. The GitHub token must have Actions read access to the repository.
+
 ## Repeat test executions
 
 Run pytest three times on the same checkout to generate separate JUnit reports:
@@ -112,4 +123,4 @@ A GitHub Actions workflow runs the tests on pushes and pull requests.
 - Add build and branch isolation for historical comparisons.
 - Improve failure clustering with stack-trace-aware signatures and similarity scoring.
 - Add Alembic versioned migrations and automated GitHub artifact polling.
-- Add automatic ingestion via scheduled polling or an authenticated webhook.
+- Deploy a scheduled poller with shared durable import tracking.
