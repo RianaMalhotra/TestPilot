@@ -88,9 +88,15 @@ Run pytest three times on the same checkout to generate separate JUnit reports:
 python -m scripts.rerun_tests --count 3 --output-dir rerun-reports
 ```
 
-Use `--count` from 1 to 20. Each execution creates a separate `rerun-N.xml` file. Import those reports through `POST /runs/junit` using the same commit SHA and branch to build evidence of inconsistent outcomes. The command runs local test code, so only use trusted checkouts.
+Use `--count` from 1 to 20. Each execution creates a separate `rerun-N.xml` file. To automatically upload each generated report to a running TestPilot API:
 
-**Note:** For existing SQLite databases created before this milestone, delete the disposable `testpilot.db` file before starting the upgraded API, or migrate the schema manually. SQLAlchemy's `create_all` does not alter existing tables.
+```bash
+python -m scripts.rerun_tests --count 3 --upload-api http://127.0.0.1:8000 --branch main
+```
+
+The command uses the current Git HEAD unless you specify `--commit-sha`. All reruns are recorded against the same commit and branch. The API must be running locally first. The command runs local test code, so only use trusted checkouts.
+
+**Database compatibility:** On startup, TestPilot adds the missing `branch` column to older SQLite databases without deleting existing test history. This is a targeted compatibility migration; versioned migrations are a future improvement.
 
 ## Testing
 
@@ -105,5 +111,5 @@ A GitHub Actions workflow runs the tests on pushes and pull requests.
 - Import JUnit XML artifacts from GitHub Actions using the GitHub API.
 - Add build and branch isolation for historical comparisons.
 - Improve failure clustering with stack-trace-aware signatures and similarity scoring.
-- Automatically ingest rerun reports and add database migrations.
+- Add Alembic versioned migrations and automated GitHub artifact polling.
 - Add automatic ingestion via scheduled polling or an authenticated webhook.
