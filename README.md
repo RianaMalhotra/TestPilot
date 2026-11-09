@@ -116,6 +116,16 @@ curl http://127.0.0.1:8000/recommendations/rerun
 
 This is an **illustrative example**, not a benchmark result or screenshot from a deployed service. If API-key authentication is enabled, include the `X-API-Key` header in each request. Use a fresh local database to reproduce the example without unrelated history.
 
+## One-command demo
+
+Run a complete example **without deploying a server or touching your existing database**:
+
+```bash
+python -m scripts.demo
+```
+
+The script creates a temporary SQLite database, ingests a passing and failing checkout test on consecutive commits, then prints the branch regression, rerun recommendation, and same-commit flakiness classification responses. It deletes the temporary database when finished. This is a local, reproducible API demonstration, not a live production deployment.
+
 ## Run locally
 
 Requires Python 3.12+.
