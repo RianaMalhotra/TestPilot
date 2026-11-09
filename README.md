@@ -6,6 +6,17 @@ TestPilot is a backend-first platform that ingests pytest/JUnit results, tracks 
 
 **Python · FastAPI · SQLAlchemy · Alembic · PostgreSQL/SQLite · pytest · GitHub Actions**
 
+## At a glance
+
+| | |
+|---|---|
+| **Problem** | CI reports show failures but rarely explain which ones are new, recurring, or inconsistent. |
+| **Solution** | A REST API that stores test history, detects regressions and same-commit flakiness, clusters failures, and ranks reruns. |
+| **Engineering focus** | Backend API design, SQL data modeling, test automation, CI integration, and explainable heuristics. |
+| **Try it** | Run `python -m scripts.demo` for an isolated, reproducible example. |
+| **Verification** | [GitHub Actions CI](https://github.com/RianaMalhotra/TestPilot/actions) · [Automated tests](https://github.com/RianaMalhotra/TestPilot/tree/main/tests) |
+| **Deployment** | GitHub-only portfolio project; no hosted API required. |
+
 ## Why I built it
 
 CI pipelines can tell you **that a test failed**, but they don't always explain whether the failure is new, recurring, or inconsistent. When a suite grows, manually comparing reports across commits and deciding which tests to rerun becomes time-consuming.
