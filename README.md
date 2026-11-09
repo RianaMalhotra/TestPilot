@@ -80,6 +80,42 @@ flowchart TD
 
 **Important distinction:** GitHub Actions produces the performance benchmark report, but it is not automatically imported into the historical performance database. The scheduled JUnit importer also requires a deployed, reachable API and configured credentials.
 
+## Example: from a failed test to an actionable result
+
+Consider a checkout test that passes on one commit and fails after a change. TestPilot stores both runs and compares their history.
+
+| Commit | Test | Outcome | Duration |
+|---|---|---|---|
+| `a1b2c3` | `tests/test_checkout.py::test_payment` | Passed | 12 ms |
+| `d4e5f6` | `tests/test_checkout.py::test_payment` | Failed | 15 ms |
+
+**1. Submit both results** using `POST /runs`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/runs \
+  -H "Content-Type: application/json" \
+  -d '{"commit_sha":"a1b2c3","branch":"main","results":[{"test_name":"tests/test_checkout.py::test_payment","passed":true,"duration_ms":12}]}'
+
+curl -X POST http://127.0.0.1:8000/runs \
+  -H "Content-Type: application/json" \
+  -d '{"commit_sha":"d4e5f6","branch":"main","results":[{"test_name":"tests/test_checkout.py::test_payment","passed":false,"duration_ms":15,"error_message":"AssertionError"}]}'
+```
+
+**2. Ask TestPilot what changed:**
+
+```bash
+curl http://127.0.0.1:8000/analytics/branch-regressions?branch=main
+curl http://127.0.0.1:8000/recommendations/rerun
+```
+
+**3. Interpret the result:**
+
+- **Regression:** The checkout test changed from passing to failing on the same branch, so it is flagged for investigation.
+- **Rerun priority:** With two executions, one failure, and one status transition, the heuristic computes a priority score of `0.5 × 70 + 1 × 10 = 45`. This score is for *ranking*, not a probability of failure.
+- **Flakiness:** This example **does not establish flakiness**. To identify inconsistent outcomes, the same test must be rerun on the same commit.
+
+This is an **illustrative example**, not a benchmark result or screenshot from a deployed service. If API-key authentication is enabled, include the `X-API-Key` header in each request. Use a fresh local database to reproduce the example without unrelated history.
+
 ## Run locally
 
 Requires Python 3.12+.
